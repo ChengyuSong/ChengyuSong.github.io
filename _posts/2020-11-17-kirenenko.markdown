@@ -51,9 +51,9 @@ In this blog post, I'm going to explain some technical details of
 [Kirenenko](https://github.com/ChengyuSong/Kirenenko).
 
 Since the implementation is quite simple
-(a small modification over the ,
+(a small modification over the data-flow sanitizer from LLVM),
 I didn't thought it would be worth writing a paper for it.
-So I just open-soured the code as
+So I just open-soured the code
 and hope people would build more interesting tools based on it.
 
 ### Problem Formulation
