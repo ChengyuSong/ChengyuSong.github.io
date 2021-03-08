@@ -245,7 +245,7 @@ Kirenenko is fast for three reasons:
    AST node is also fast.
 
 So how fast it really is? Here are some quick test results I got, please feel
-free to grade the code and try yourself.
+free to grab the code and try yourself.
 
 Program | Native  | w/o Solving | w/ Solving
 :-------| ------: | -----------:| ---------:
