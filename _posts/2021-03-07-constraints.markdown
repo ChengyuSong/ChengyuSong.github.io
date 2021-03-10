@@ -42,7 +42,7 @@ The list of programs are:
 * tiff2pdf (libtiff)
 * vorbis
 
-You can download the archives [here](dropbox.com/sh/aebml54m4g5).
+You can download the archives [here](https://www.dropbox.com/sh/aebml54m4g5erjm/AABO_tIpjfSui_fRWlnG-X1Ga?dl=0).
 My student has also prepared an example on how to load the constraints and feed
 to Z3, which can be find [here](https://github.com/chenju2k6/z3-test).
 
