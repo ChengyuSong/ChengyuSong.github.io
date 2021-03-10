@@ -47,3 +47,8 @@ My student has also prepared an example on how to load the constraints and feed
 to Z3, which can be find [here](https://github.com/chenju2k6/z3-test).
 
 Have fun!
+
+Update: I haven't fully enabled collecting floating pointer and string
+constraints in Kireneko yet (in slow progress), so all constraints are
+`QF_BV` now.
+
