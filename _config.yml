@@ -24,6 +24,8 @@ github_username:  ChengyuSong
 
 # Build settings
 markdown: kramdown
+kramdown:
+  math_engine: mathjax
 theme: minima
 plugins:
   - jekyll-feed

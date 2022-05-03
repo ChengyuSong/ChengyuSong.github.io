@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "JIGSAW: Fuzzing Path Constraints"
-date:   2022-05-03 13:00:00 -0800
+date:   2022-05-03 10:00:00 -0800
 categories: fuzzing
 ---
 
@@ -100,20 +100,20 @@ for two main reasons:
 
 Applying this searching technique to path constraints is quite straightforward,
 we just need to replace the relational operation with a loss function
-($\epsilon = 1$):
+($$\epsilon = 1$$):
 
-Comparison  | Loss function $f()$
-:-----------|:---------------------------------------------------
-$slt(a, b)$ | $max(sext(a,64) - sext(b,64) + \epsilon, 0)$
-$sle(a, b)$ | $max(sext(a,64) - sext(b,64), 0)$
-$sgt(a, b)$ | $max(sext(b,64) - sext(a,64) + \epsilon, 0)$
-$sge(a, b)$ | $max(sext(b,64) - sext(a,64), 0)$
-$ult(a, b)$ | $max(zext(a,64) - zext(b,64) + \epsilon, 0)$
-$ule(a, b)$ | $max(zext(a,64) - zext(b,64), 0)$
-$ugt(a, b)$ | $max(zext(b,64) - zext(a,64) + \epsilon, 0)$
-$uge(a, b)$ | $max(zext(b,64) - zext(a,64), 0)$
-$a = b$     | $abs(zext(a,64) - zext(b,64))$
-$a \neq b$  | $max(-abs(zext(a,64) - zext(b,64)) + \epsilon, 0)$
+Comparison    | Loss function $$f()$$
+:-------------|:---------------------------------------------------
+$$slt(a, b)$$ | $$max(sext(a,64) - sext(b,64) + \epsilon, 0)$$
+$$sle(a, b)$$ | $$max(sext(a,64) - sext(b,64), 0)$$
+$$sgt(a, b)$$ | $$max(sext(b,64) - sext(a,64) + \epsilon, 0)$$
+$$sge(a, b)$$ | $$max(sext(b,64) - sext(a,64), 0)$$
+$$ult(a, b)$$ | $$max(zext(a,64) - zext(b,64) + \epsilon, 0)$$
+$$ule(a, b)$$ | $$max(zext(a,64) - zext(b,64), 0)$$
+$$ugt(a, b)$$ | $$max(zext(b,64) - zext(a,64) + \epsilon, 0)$$
+$$uge(a, b)$$ | $$max(zext(b,64) - zext(a,64), 0)$$
+$$a = b$$     | $$abs(zext(a,64) - zext(b,64))$$
+$$a \neq b$$  | $$max(-abs(zext(a,64) - zext(b,64)) + \epsilon, 0)$$
 
 Note that this heuristic is not the most efficient one.
 For example, the input-to-state inference heuristic from [RedQueen](https://www.ndss-symposium.org/wp-content/uploads/2019/02/ndss2019_04A-2_Aschermann_paper.pdf)
