@@ -1,0 +1,188 @@
+---
+layout: post
+title:  "JIGSAW: Fuzzing Path Constraints"
+date:   2022-05-03 13:00:00 -0800
+categories: fuzzing
+---
+
+## The Story
+
+One of the most important factors that affect a fuzzer's performance is its throughput
+(i.e., how many inputs can be evaluated per unit time).
+Some people have even argued that this is the most important factor.
+In 2018, Brandon Falk ([@gamozolabs](https://twitter.com/gamozolabs)) published a technique called
+[vectorized emulation](https://gamozolabs.github.io/fuzzing/2018/10/14/vectorized_emulation.html), which brought a big breakthrough in fuzzing throughput.
+By leveraging data parallelization, this technique can evaluate 4096 inputs
+at the same on a Xeon Phi 7210 acceleration card, which allows him to fuzz
+the OpenBSD’s DHCP client with 5 million cases per second.
+As a result, even with a simple byte flipper, his fuzzer can find complex
+vulnerabilities like [CVE-2018-8206](https://portal.msrc.microsoft.com/en-US/security-guidance/advisory/CVE-2018-8206).
+
+I was fascinated by this technique, however, I'm not smart enough to come up
+with [a good solution for handling conditional branches](https://gamozolabs.github.io/fuzzing/2019/10/07/vectorized_emulation_condbranch.html),
+when different inputs follows different branches targets.
+So, I started to think about ways to avoid this problem and one day an idea
+came to my mind: why not fuzz the path constraints?
+
+### Benefits
+
+Path constraints are essentially sliced execution traces relevant to a branch
+we want to negate.
+More importantly, if we transform path constraints to disjunctive normal form (DNF),
+then each sub-clause is (or can be simplified into) a set of relational operations
+connected with logical AND operations, where each relational operation is
+simple straight-line function.
+There are several benefits of fuzzing path constraints (i.e., a set of straight-line function).
+
+1. Apparently, invoking a set of simple functions by nature is orders of magnitude faster than
+   executing the whole program under test.
+
+2. When evaluating a new test input with these functions, the input can be passed
+   through registers and memory instead of the file system,
+   which eliminates the [file system bottleneck](https://dl.acm.org/doi/pdf/10.1145/3133956.3134046).
+
+3. Because path constraints do not update any global state, these functions are side-effect free (i.e., pure).
+   So, evaluating new inputs with them avoids any state resetting process (e.g., snapshot or fork).
+
+4. Also Because every JIT'ed function is pure (i.e., independent of each other),
+   we can linearly scale the fuzzing threads to multiple cores without worrying about data races and synchronization.
+
+5. Because these functions are free of branches, it is easier for modern processors to exploit
+   instruction-level parallelism (i.e., no mis-speculation) and
+   to **adopt SIMD (Single Instruction Multiple Data) instructions**.
+
+In other words, applying vectorized emulation to fuzz path constraints is much easier.
+
+### Technical Details
+
+Since we already have a fast constraint collector [Kirenenko](https://chengyusong.github.io/fuzzing/2020/11/18/kirenenko.html)
+that can trace path constraints at the LLVM IR level,
+we decided to use LLVM's JIT engine to compile the path constraints into native functions
+and fuzz them.
+Working with LLVM IR also makes it easier to vectorize the code.
+The drawback, however, is that the JIT engine is quite slow,
+so if we don't do any optimizations, most time would be spent on JIT compiling.
+
+#### Code Cache
+
+The first natural idea to try is to add a code cache, so we can avoid compiling
+the same constraints again and again.
+However, if we use the entire path constraints as key to do lookup,
+then the cache hit rate is not high.
+To solve this problem, we leveraged the observation that though individual
+constraints could be different (e.g., `a > 10`, `b > 20`, `30 > c`),
+they all perform the same comparison.
+Therefore, we can use the same function to solve all of them,
+by parameterizing both symbolic and concrete operands:
+
+```c
+gt(x, y) { return y - x; }
+``` 
+
+Following is the effectiveness of different caching strategies,
+when solving 20,000 constraints from `readelf`.
+
+Caching       | Hit Rate |  JIT | Searching | Throughput
+:-------------| -------: | ----:| ---------:| ------------:
+Disabled      |      N/A | 33.9s|     12.6s | 229K inputs/s
+Full AST      |    66.9% | 12.1s|     12.6s | 394K inputs/s
+Normalized AST|    99.9% |  0.7s|     12.6s | 747K inputs/s
+
+
+#### Fuzzing Heuristic
+
+Next, how to we fuzz/solve the path constraints?
+There are many heuristic we can apply, as studied in [FuzzySat](https://arxiv.org/abs/2102.06580).
+In JIGSAW, we used the gradient-guided search from [Angora](https://www.cs.ucdavis.edu/~hchen/paper/chen2018angora.pdf),
+for two main reasons:
+(1) it is general enough to handle most types of constraints; and
+(2) it does not need to save intermediate results (i.e., maintaining a seed queue).
+
+Applying this searching technique to path constraints is quite straightforward,
+we just need to replace the relational operation with a loss function
+($\epsilon = 1$):
+
+Comparison  | Loss function $f()$
+:-----------|:---------------------------------------------------
+$slt(a, b)$ | $max(sext(a,64) - sext(b,64) + \epsilon, 0)$
+$sle(a, b)$ | $max(sext(a,64) - sext(b,64), 0)$
+$sgt(a, b)$ | $max(sext(b,64) - sext(a,64) + \epsilon, 0)$
+$sge(a, b)$ | $max(sext(b,64) - sext(a,64), 0)$
+$ult(a, b)$ | $max(zext(a,64) - zext(b,64) + \epsilon, 0)$
+$ule(a, b)$ | $max(zext(a,64) - zext(b,64), 0)$
+$ugt(a, b)$ | $max(zext(b,64) - zext(a,64) + \epsilon, 0)$
+$uge(a, b)$ | $max(zext(b,64) - zext(a,64), 0)$
+$a = b$     | $abs(zext(a,64) - zext(b,64))$
+$a \neq b$  | $max(-abs(zext(a,64) - zext(b,64)) + \epsilon, 0)$
+
+Note that this heuristic is not the most efficient one.
+For example, the input-to-state inference heuristic from [RedQueen](https://www.ndss-symposium.org/wp-content/uploads/2019/02/ndss2019_04A-2_Aschermann_paper.pdf)
+could be faster, as shown in FuzzySat.
+But it is more general and easy to implement.
+
+#### Making Things More Scalable
+
+So far we have a simple fuzzer to fuzz the path constraints.
+To make the fuzzer more scalable to multiple threads/cores,
+we applied a few more optimizations to minimize potential lock contention.
+First, each thread has its own LLVM JIT engine to avoid sharing.
+Second, we use a lock-free queue to dispatch solving tasks to different threads.
+Third, we implemented the code cache using a lock-free hash table.
+Finally, we minimize dynamic memory allocation and use the TCMalloc
+from Google to reduce contentions caused by `malloc` and `free`.
+
+### Performance
+
+So can we actually improve the fuzzing performance, or to be more specific,
+the performance of concolic execution, since we need to collect and solve
+path constraints. To answer this question, we followed SymCC and conducted
+a concolic execution evaluation: using the corpora from [NUEZZ](https://github.com/Dongdongshe/neuzz),
+we ask each fuzzer to flip all symbolic branches of each input file and
+record the turnaround time and the final basic block coverage measured by SanitizerCoverage.
+Note that we turned off all input level timeout to make sure all symbolic
+branches along the trace will be processed.
+Here JIGSAW and Z3-10s (10s means the timeout for each path constraints)
+both uses Kirenenko as the constraint collector, the only difference is the solver.
+Angora uses the same fuzzing heuristic as JIGSAW but each input is evaluated
+with the whole program.
+[SymCC](https://github.com/eurecom-s3/symcc) also uses Z3 as the path constraint solver with 10s as the timeout.
+[Fuzzolic](https://season-lab.github.io/fuzzolic/) uses FuzzySat as the solver.
+
+Program | JIGSAW  | Z3-10s | Angora | SymCC  | Fuzzolic 
+:-------| ------: | ------:| ------:| ------:| -------:
+readelf |    2.2h |  51.3h |  89.5h | 546.6h |   48.2h
+objdump |   12.3h | 227.5h | 411.5h | 373.5h |   52.2h
+nm      |    0.3h |  18.1h |  72.3h |  29.3h |   48.2h
+size    |    0.1h |   8.4h |  16.8h |  12.6h |    5.2h
+libxml2 |    0.2h |   9.3h |  58.0h |  52.3h |   20.9h
+
+
+Program | JIGSAW  | Z3-10s | Angora | SymCC  | Fuzzolic
+:-------| ------: | ------:| ------:| ------:| -------:
+readelf |    7923 |   7957 |   8287 |   6410 |    5843
+objdump |    4926 |   4926 |   4846 |   4929 |    4689
+nm      |    3347 |   3347 |   3339 |   3122 |    3123
+size    |    2453 |   2457 |   2406 |   2229 |    2259
+libxml2 |    6038 |   6233 |   5952 |   6012 |    6022
+
+Based on the coverage, we can see that JIGSAW is not as capable as Z3
+(due to limitations of the gradient-guided search), it is much faster.
+And this is achieved with a single solving thread and no vectorization.
+
+### More Details
+
+If you're interested, you can find more details and evaluation results
+(e.g., comparison with SMT solvers) in our [paper](https://www.cs.ucr.edu/~csong/oakland22-jigsaw.pdf).
+
+The source code of JIGSAW can be found [here](https://github.com/R-Fuzz/jigsaw).
+The current released code is the C++ version, we also have a Rust version
+that needs some cleanup.
+The vectorized version also needs some update.
+
+### What's Next
+
+In short term, we will continue to improve JIGSAW by incorporating better
+fuzzing heuristics and supporting other types of constraints.
+
+In long term, we hope Kirenenko and JIGSAW can serve as a foundation to solve
+other bottlenecks in concolic execution, such as the path explosion problem.
